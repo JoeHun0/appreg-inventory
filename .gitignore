@@ -1,0 +1,5 @@
+# Inventory results map your tenant's privileged access - never commit them.
+appreg-inventory-*/
+*.tsv
+raw/
+*.jsonl

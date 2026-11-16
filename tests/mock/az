@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# Mock of the az CLI for the test suite. It answers only the calls
+# appreg-inventory.sh makes, with a small fictional tenant:
+#
+#   app "terraform-deploy"  2 client secrets (1 expired), owned by a user and an SP,
+#                           Owner on a management group (duplicated in two sources,
+#                           with different letter case), Contributor on a subscription,
+#                           member of group "cloud-admins" (Reader on a resource group,
+#                           Entra role Application Administrator),
+#                           Graph permissions Application.ReadWrite.All + User.Read.All
+#   app "billing-reader"    1 client secret, 1 certificate, SP disabled,
+#                           User Access Administrator on the root scope "/"
+#   app "no-secret-app"     no credentials (skipped unless -A)
+#   SP  "saml-app"          own password credential (SAML SSO)
+#
+# It also simulates paging (Resource Graph skip token, Graph nextLink) and
+# refusals (tenant-wide directory role list, PIM eligibility schedules).
+# SPDX-License-Identifier: MIT
+
+args="$*"
+url=""; prev=""
+for x in "$@"; do [[ "$prev" == "--url" ]] && url="$x"; prev="$x"; done
+
+TENANT=00000000-0000-0000-0000-0000000000aa
+SPA=00000000-0000-0000-0000-00000000000a      # terraform-deploy SP
+SPC=00000000-0000-0000-0000-00000000000c      # billing-reader SP
+GRP=00000000-0000-0000-0000-000000000009      # group cloud-admins
+GRAPHSP=00000000-0000-0000-0000-0000000000ff  # Microsoft Graph SP
+OWNER=8e3af657-a8ff-443c-a75c-2fe8c4bcb635
+CONTRIB=b24988ac-6180-42a0-ab88-20f7382dd24c
+READER=acdd72a7-3385-48ef-bd42-f606fba81ae7
+UAA=18d7d88d-d35e-4fb5-a5c3-7773c20a72d9
+MG=/providers/Microsoft.Management/managementGroups/mg-platform
+
+case "$args" in
+  "extension show"*) exit 0 ;;
+  "account show"*) echo "$TENANT" ;;
+
+  "ad app list --all"*) cat <<J
+[{"objectId":"objA","appId":"appA","name":"terraform-deploy","created":"2020-01-01T00:00:00Z",
+  "secrets":[{"keyId":"k1","description":"old","start":"2020-01-01T00:00:00Z","end":"2022-01-01T00:00:00Z"},
+             {"keyId":"k2","description":"pipeline","start":"2024-01-01T00:00:00.1234567Z","end":"2099-01-01T00:00:00Z"}],
+  "certs":[]},
+ {"objectId":"objB","appId":"appB","name":"no-secret-app","created":null,"secrets":[],"certs":null},
+ {"objectId":"objC","appId":"appC","name":"billing-reader","created":null,
+  "secrets":[{"keyId":"k3","description":null,"start":"2026-01-01T00:00:00Z","end":"2027-01-01T00:00:00Z"}],
+  "certs":[{"keyId":"c1","end":"2027-01-01T00:00:00Z"}]}]
+J
+  ;;
+  "ad app list --filter"*)
+    echo '[{"objectId":"objC","appId":"appC","name":"billing-reader","secrets":[],"certs":[]}]' ;;
+
+  "ad sp list"*) cat <<J
+[{"id":"$SPA","appId":"appA","name":"terraform-deploy","type":"Application","enabled":true,"sso":null,"ownSecrets":0,"ownCerts":0},
+ {"id":"$SPC","appId":"appC","name":"billing-reader","type":"Application","enabled":false,"sso":null,"ownSecrets":0,"ownCerts":0},
+ {"id":"$GRAPHSP","appId":"00000003-0000-0000-c000-000000000000","name":"Microsoft Graph","type":"Application","enabled":true,"sso":null,"ownSecrets":0,"ownCerts":0},
+ {"id":"samlsp","appId":"appS","name":"saml-app","type":"Application","enabled":true,"sso":"saml","ownSecrets":1,"ownCerts":2}]
+J
+  ;;
+
+  rest*)
+    case "$url" in
+      */applications/objA/owners*)
+        echo '{"value":[{"id":"u1","displayName":"Admin One","userPrincipalName":"admin1@example.test"},{"id":"sp9","displayName":"automation-sp"}]}' ;;
+      */applications/*/owners*) echo '{"value":[]}' ;;
+      */servicePrincipals/$SPA/transitiveMemberOf*page2)
+        echo '{"value":[{"@odata.type":"#microsoft.graph.directoryRole","id":"dr1","displayName":"ignored"}]}' ;;
+      */servicePrincipals/$SPA/transitiveMemberOf*)
+        echo "{\"value\":[{\"@odata.type\":\"#microsoft.graph.group\",\"id\":\"$GRP\",\"displayName\":\"cloud-admins\"}],\"@odata.nextLink\":\"$url&page2\"}" ;;
+      */transitiveMemberOf*) echo '{"value":[]}' ;;
+      */servicePrincipals/$SPA/appRoleAssignments)
+        echo "{\"value\":[{\"resourceId\":\"$GRAPHSP\",\"appRoleId\":\"r-appRW\"},{\"resourceId\":\"$GRAPHSP\",\"appRoleId\":\"r-userR\"}]}" ;;
+      */servicePrincipals/$SPC/appRoleAssignments)
+        echo "{\"value\":[{\"resourceId\":\"$GRAPHSP\",\"appRoleId\":\"00000000-0000-0000-0000-000000000000\"}]}" ;;
+      */servicePrincipals/$GRAPHSP\?*)
+        echo "{\"id\":\"$GRAPHSP\",\"displayName\":\"Microsoft Graph\",\"appRoles\":[{\"id\":\"r-appRW\",\"value\":\"Application.ReadWrite.All\"},{\"id\":\"r-userR\",\"value\":\"User.Read.All\"}]}" ;;
+      */roleDefinitions*)
+        echo '{"value":[{"id":"rd-appadmin","displayName":"Application Administrator","templateId":"rd-appadmin"}]}' ;;
+      */roleAssignments\?*$GRP*)
+        echo "{\"value\":[{\"id\":\"ra1\",\"principalId\":\"$GRP\",\"roleDefinitionId\":\"rd-appadmin\",\"directoryScopeId\":\"/\"}]}" ;;
+      */roleAssignments\?*) echo '{"value":[]}' ;;
+      */roleAssignments) echo "Forbidden (simulated)" >&2; exit 1 ;;
+      */roleEligibilitySchedules*) echo "Forbidden (simulated)" >&2; exit 1 ;;
+      *) echo "mock az: unhandled url $url" >&2; exit 1 ;;
+    esac ;;
+
+  graph\ query*roleassignments*)
+    if [[ "$args" == *--skip-token* ]]; then cat <<J
+{"data":[
+ {"id":"/subscriptions/s1/providers/Microsoft.Authorization/roleAssignments/ra-b","principalId":"$SPA","principalType":"ServicePrincipal","roleDefinitionId":"/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/$CONTRIB","scope":"/subscriptions/s1"},
+ {"id":"/subscriptions/s2/resourceGroups/rg1/providers/Microsoft.Authorization/roleAssignments/ra-c","principalId":"$GRP","principalType":"Group","roleDefinitionId":"/subscriptions/s2/providers/Microsoft.Authorization/roleDefinitions/$READER","scope":"/subscriptions/s2/resourceGroups/rg1"},
+ {"id":"/subscriptions/s3/providers/Microsoft.Authorization/roleAssignments/ra-d","principalId":"someone-else","principalType":"ServicePrincipal","roleDefinitionId":"/providers/Microsoft.Authorization/roleDefinitions/$OWNER","scope":"/subscriptions/s3"}],
+ "skip_token":null}
+J
+    else cat <<J
+{"data":[{"id":"$MG/providers/Microsoft.Authorization/roleAssignments/ra-a","principalId":"$SPA","principalType":"ServicePrincipal","roleDefinitionId":"/providers/Microsoft.Authorization/roleDefinitions/$OWNER","scope":"$MG"}],
+ "skip_token":"page2"}
+J
+    fi ;;
+  graph\ query*roledefinitions*)
+    echo "{\"data\":[{\"id\":\"x\",\"name\":\"$OWNER\",\"roleName\":\"Owner\"},{\"id\":\"y\",\"name\":\"$CONTRIB\",\"roleName\":\"Contributor\"}],\"skip_token\":null}" ;;
+
+  "account management-group list"*) printf 'root-mg\nmg-platform\n' ;;
+  "role assignment list --scope $MG "*)
+    echo "[{\"id\":\"$MG/providers/Microsoft.Authorization/RoleAssignments/RA-A\",\"principalId\":\"$SPA\",\"principalType\":\"ServicePrincipal\",\"roleDefinitionId\":\"/providers/Microsoft.Authorization/roleDefinitions/$OWNER\",\"scope\":\"$MG\"}]" ;;
+  "role assignment list --scope /providers"*) echo '[]' ;;
+  "role assignment list --scope / "*)
+    echo "[{\"id\":\"/providers/Microsoft.Authorization/roleAssignments/root1\",\"principalId\":\"$SPC\",\"principalType\":\"ServicePrincipal\",\"roleDefinitionId\":\"/providers/Microsoft.Authorization/roleDefinitions/$UAA\",\"scope\":\"/\"}]" ;;
+  "role definition list"*)
+    echo "[{\"name\":\"$UAA\",\"roleName\":\"User Access Administrator\"},{\"name\":\"$READER\",\"roleName\":\"Reader\"}]" ;;
+
+  *) echo "mock az: unhandled call: $args" >&2; exit 1 ;;
+esac
