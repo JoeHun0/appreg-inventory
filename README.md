@@ -68,7 +68,7 @@ These don't show on the app registration, so they're easy to miss (see [Output](
 ## Usage
 
 ```bash
-git clone https://github.com/__GITHUB_USER__/appreg-inventory.git
+git clone https://github.com/JoeHun0/appreg-inventory.git
 cd appreg-inventory
 ./appreg-inventory.sh                         # apps with client secrets (default)
 ./appreg-inventory.sh -A                      # all app registrations

@@ -40,7 +40,7 @@
 
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Kotnyek József
-# https://github.com/__GITHUB_USER__/appreg-inventory
+# https://github.com/JoeHun0/appreg-inventory
 
 set -uo pipefail
 
