@@ -215,20 +215,24 @@ read -r -d '' JQ_REPORT <<'JQ'
   "## Worklist",
   "",
   "| Severity | Items |", "|---|---|",
-  ($items | map(.sev) | group_by(.) | reverse
+  ($items[0] | map(.sev) | group_by(.) | reverse
    | if length == 0 then "| (none) | |" else .[] | "| \(.[0] | risklabel) | \(length) |" end)
 JQ
 
 ARGS=(--slurpfile model "$DIR/raw/model.jsonl" --slurpfile apps "$DIR/raw/apps.jsonl"
       --argjson days "$DAYS" --arg all "$ALL" --arg detected "$DETECTED" --arg sep "$SEP")
-ITEMS=$(jq -n -c "${ARGS[@]}" "$JQ_PRE $JQ_ROWS") || die "building the worklist failed"
-{ printf '\xEF\xBB\xBF'; jq -n -r --argjson rows "$ITEMS" --arg sep "$SEP" --arg detected "$DETECTED" \
+# The rows go through a file: as a command-line argument they would hit the OS limit
+# (128 KB per argument on Linux, 32 KB per command line on Windows).
+ITEMS=$(mktemp) || die "cannot create a temporary file"
+trap 'rm -f "$ITEMS"' EXIT
+jq -n -c "${ARGS[@]}" "$JQ_PRE $JQ_ROWS" > "$ITEMS" || die "building the worklist failed"
+{ printf '\xEF\xBB\xBF'; jq -r --arg sep "$SEP" --arg detected "$DETECTED" \
     'def risklabel: ["", "LOW", "MEDIUM", "HIGH", "CRITICAL"][.];
     def rights: [.rbac[] | select(.rating >= 3) | "\(.role) @ \(.level)"] + [.entra[] | select(.rating >= 3) | .role]
-                + [.api[] | select(.rating >= 3) | .perm] | unique | join("; "); $rows '"$JQ_CSV"; } > "$OUT/appreg-worklist.csv" \
+                + [.api[] | select(.rating >= 3) | .perm] | unique | join("; "); . as $rows '"$JQ_CSV" < "$ITEMS"; } > "$OUT/appreg-worklist.csv" \
   || die "writing worklist.csv failed"
-jq -n -r "${ARGS[@]}" --argjson items "$ITEMS" "$JQ_PRE $JQ_REPORT" > "$OUT/appreg-report.md" \
+jq -n -r "${ARGS[@]}" --slurpfile items "$ITEMS" "$JQ_PRE $JQ_REPORT" > "$OUT/appreg-report.md" \
   || die "building report.md failed"
 
 printf 'appreg-report.md     %s  (counts only - safe for the report)\n' "$OUT/appreg-report.md" >&2
-printf 'appreg-worklist.csv  %s  (%s items, with names - internal)\n' "$OUT/appreg-worklist.csv" "$(jq -r 'length' <<<"$ITEMS")" >&2
+printf 'appreg-worklist.csv  %s  (%s items, with names - internal)\n' "$OUT/appreg-worklist.csv" "$(jq -r 'length' < "$ITEMS")" >&2

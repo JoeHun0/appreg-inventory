@@ -97,6 +97,13 @@ bash "$SUM" "$WORK/evil" 2>/dev/null
 line "worklist: formula-like names neutralised" '"'"'"'=HYPERLINK(""x"")"' "$WORK/evil/appreg-worklist.csv"
 if ! bash "$SUM" "$WORK/nonexistent" >/dev/null 2>&1; then ok "rejects a folder without inventory"; else bad "rejects a folder without inventory"; fi
 
+echo "appreg-summary.sh at scale"
+mkdir -p "$WORK/big/raw"
+jq -c 'range(0; 1500) as $i | . + {appId: "\(.appId)-\($i)", name: "\(.name)-\($i)"}' "$WORK/all/raw/model.jsonl" > "$WORK/big/raw/model.jsonl"
+jq -c 'range(0; 1500) as $i | . + {appId: "\(.appId)-\($i)"}' "$WORK/all/raw/apps.jsonl" > "$WORK/big/raw/apps.jsonl"
+if bash "$SUM" "$WORK/big" >/dev/null 2>"$WORK/biglog"; then ok "4 500 apps: no 'argument list too long'"; else bad "4 500 apps: no 'argument list too long'"; cat "$WORK/biglog"; fi
+is "  ... all items written" "$(($(wc -l < "$WORK/big/appreg-worklist.csv") - 1))" 7500
+
 echo "argument checks"
 if ! bash "$SCRIPT" -a not-a-guid >/dev/null 2>&1; then ok "rejects a malformed app ID"; else bad "rejects a malformed app ID"; fi
 if bash "$SCRIPT" -h | grep -q "READ-ONLY inventory"; then ok "-h prints help"; else bad "-h prints help"; fi
