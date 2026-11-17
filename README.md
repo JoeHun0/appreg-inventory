@@ -139,6 +139,28 @@ The full lists are at the top of the `JQ_MODEL` block in the script. Adjust them
 - **Managed identities** aren't included because they can't have client secrets. Use `-A`, or adapt the
   script, if you need them.
 
+## Summary for reports
+
+`appreg-summary.sh` turns an output folder into a short Markdown summary. It needs only `jq`, no Azure
+access:
+
+```bash
+./appreg-summary.sh appreg-inventory-20261117-0930              # counts only
+./appreg-summary.sh -n appreg-inventory-20261117-0930           # plus the CRITICAL/HIGH apps by name
+./appreg-summary.sh -d 60 appreg-inventory-20261117-0930 > summary.md
+```
+
+It shows:
+- apps per risk level, with how many have a valid secret, no owner, or a disabled or missing service principal
+- secret validity: valid vs only expired, expiring soon (`-d`, default 30 days), lifetime over 1 and 2 years, and not rotated for a year
+- why apps are CRITICAL: Azure role at root/management-group scope, tier-0 Entra role, or takeover API permission
+- the 10 most common privileged Azure roles, Entra roles and API permissions
+- cleanup candidates
+
+**Without `-n`, the summary contains no app names, IDs or owners**, so it can go into a report or
+ticket. With `-n` it lists the CRITICAL and HIGH apps and the secrets that expire soon. Treat that
+version like the inventory itself.
+
 ## After the inventory
 
 These are common next steps, roughly in order:

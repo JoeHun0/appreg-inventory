@@ -69,6 +69,20 @@ for f in summary azure_rbac entra_roles api_permissions sp_own_secrets; do
   if cmp -s "$OUT/$f.tsv" "$WORK/win/$f.tsv"; then ok "$f.tsv same as on Linux"; else bad "$f.tsv same as on Linux"; fi
 done
 
+echo "appreg-summary.sh"
+SUM="$HERE/../appreg-summary.sh"
+bash "$SUM" "$WORK/all" > "$WORK/sum.md" 2>"$WORK/sumlog" && ok "summary exits 0" || { bad "summary exits 0"; cat "$WORK/sumlog"; }
+if grep -qF "| CRITICAL | 2 | 2 | 1 | 1 |" "$WORK/sum.md"; then ok "risk table counts"; else bad "risk table counts"; fi
+if grep -qF "Valid secrets in total: **2**" "$WORK/sum.md"; then ok "valid secrets counted"; else bad "valid secrets counted"; fi
+if grep -qF "lifetime over 1 year: **1**, over 2 years: **1**" "$WORK/sum.md"; then ok "secret lifetimes"; else bad "secret lifetimes"; fi
+if grep -qF "root or management-group scope: **2**" "$WORK/sum.md"; then ok "CRITICAL reasons"; else bad "CRITICAL reasons"; fi
+if grep -qF "| Owner @ managementGroup | 1 |" "$WORK/sum.md"; then ok "top Azure roles"; else bad "top Azure roles"; fi
+if ! grep -qE "terraform-deploy|billing-reader|appA|admin1@" "$WORK/sum.md"; then ok "no names without -n"; else bad "no names without -n"; fi
+bash "$SUM" -n "$WORK/all" > "$WORK/sumn.md" 2>/dev/null
+if grep -qF "| CRITICAL | terraform-deploy | appA |" "$WORK/sumn.md"; then ok "-n lists CRITICAL apps"; else bad "-n lists CRITICAL apps"; fi
+if bash "$SUM" -n -d 40000 "$WORK/all" | grep -qF "| 2099-01-01T00:00:00Z | terraform-deploy | CRITICAL |"; then ok "-d widens the expiry window"; else bad "-d widens the expiry window"; fi
+if ! bash "$SUM" "$WORK/nonexistent" >/dev/null 2>&1; then ok "rejects a folder without inventory"; else bad "rejects a folder without inventory"; fi
+
 echo "argument checks"
 if ! bash "$SCRIPT" -a not-a-guid >/dev/null 2>&1; then ok "rejects a malformed app ID"; else bad "rejects a malformed app ID"; fi
 if bash "$SCRIPT" -h | grep -q "READ-ONLY inventory"; then ok "-h prints help"; else bad "-h prints help"; fi

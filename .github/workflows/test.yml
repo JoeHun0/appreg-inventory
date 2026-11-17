@@ -13,6 +13,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Syntax check
-        run: bash -n appreg-inventory.sh && bash -n tests/run-tests.sh && bash -n tests/mock/az
+        run: bash -n appreg-inventory.sh && bash -n appreg-summary.sh && bash -n tests/run-tests.sh && bash -n tests/mock/az
       - name: Tests (mock az, no Azure access)
         run: tests/run-tests.sh
