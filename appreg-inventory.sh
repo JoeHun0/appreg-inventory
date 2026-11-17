@@ -210,8 +210,9 @@ while IFS=$'\t' read -r appId objId name; do
 done < <(jq -r '[.appId, .objectId, .name] | @tsv' "$RAW/apps.jsonl")
 
 # principals whose roles we need: the apps' service principals + their groups
-jq -r --slurpfile apps "$RAW/apps.jsonl" \
-  '.appId as $a | select(any($apps[]; .appId == $a)) | .id' "$RAW/sps.jsonl" > "$RAW/principals.txt"
+jq -n -r --slurpfile apps "$RAW/apps.jsonl" \
+  '($apps | map({key: .appId, value: true}) | from_entries) as $sel | inputs | select($sel[.appId]) | .id' \
+  "$RAW/sps.jsonl" > "$RAW/principals.txt"
 jq -r '.groupId' "$RAW/groups.jsonl" >> "$RAW/principals.txt"
 sort -u -o "$RAW/principals.txt" "$RAW/principals.txt"
 
