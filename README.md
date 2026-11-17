@@ -8,6 +8,32 @@ permissions, including what they get through group membership. It sorts the apps
 ./appreg-inventory.sh            # every app registration that has a client secret
 ```
 
+## Quick start
+
+1. Sign in with the Azure CLI and add the Resource Graph extension (once):
+   ```bash
+   az login
+   az extension add --name resource-graph
+   ```
+2. Run the inventory. It only reads. Expect a few seconds per app, so up to an hour for about 1 000 apps:
+   ```bash
+   ./appreg-inventory.sh
+   ```
+   The results go to a new folder, `./appreg-inventory-YYYYMMDD-HHMM/`.
+3. Turn the results into a report and a worklist:
+   ```bash
+   ./appreg-summary.sh appreg-inventory-YYYYMMDD-HHMM
+   ```
+4. Use the two files it writes into the folder:
+   - **`appreg-report.md`**: counts only, with no names. Paste it into your report or ticket.
+   - **`appreg-worklist.csv`**: one row per thing to fix, with severity, what to do and the details. Load it into
+     Excel (*Data → From Text/CSV*) and assign rows to the people who fix them.
+
+   Everything else in the folder (the `.tsv` files and `raw/`) is the detailed inventory. Keep it private.
+
+On Windows, run the scripts in **Git Bash** or **WSL** with the Azure CLI installed. Run them from a folder
+outside any git repository, so the results can't be committed by accident.
+
 ## Why
 
 A client secret is a long-lived password for an application. Anyone who has it can sign in as the app
@@ -94,6 +120,8 @@ They open directly in LibreOffice Calc or Excel.
 | `sp_own_secrets.tsv` | Service principals with their own password credentials (not written with `-a`). This is **normal for SAML SSO apps** (`singleSignOnMode = saml`) and **worth investigating for anything else**: credentials added directly to a service principal are a known persistence technique. |
 | `raw/` | The JSON lines the reports are built from, for your own queries with `jq` |
 
+For a shareable summary and a to-do list, run `appreg-summary.sh` on the folder: see [Report and worklist](#report-and-worklist).
+
 ## Risk rating
 
 The rating is a **heuristic to sort by**, not a verdict. Each role or permission gets a rating, and the app
@@ -163,6 +191,8 @@ Notes on the CSV:
 - `-d 60` sets the "expires soon" window in days (default 30).
 
 ## After the inventory
+
+The worklist (`appreg-worklist.csv`, see [Report and worklist](#report-and-worklist)) contains these steps as one row per app and issue, ready to assign.
 
 These are common next steps, roughly in order:
 
