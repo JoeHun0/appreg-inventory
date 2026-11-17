@@ -203,7 +203,7 @@ read -r -d '' JQ_REPORT <<'JQ'
   ([$A[] | [.rbac[] | select(.rating >= 3) | "\(.role) @ \(.level)"] | unique[]] | top(10) | table),
   "",
   "| Entra ID role | Apps |", "|---|---|",
-  ([$A[] | [.entra[] | "\(.role) (\(.kind))"] | unique[]] | top(10) | table),
+  ([$A[] | [.entra[] | select(.rating >= 3) | "\(.role) (\(.kind))"] | unique[]] | top(10) | table),
   "",
   "| API permission | Apps |", "|---|---|",
   ([$A[] | [.api[] | select(.rating >= 3) | "\(.perm) [\(.api)]"] | unique[]] | top(10) | table),

@@ -82,6 +82,8 @@ if ((same)); then ok "rebuild reproduces every report"; else bad "rebuild reprod
 sed -i 's/"displayName":"Application Administrator"/"displayName":"Directory Readers"/' "$WORK/rb/raw/dirdefs.jsonl"
 bash "$SCRIPT" -R "$WORK/rb" 2>/dev/null
 has "$WORK/rb/entra_roles.tsv" "rebuild re-rates: reader role is MEDIUM" MEDIUM terraform-deploy appA
+bash "$HERE/../appreg-summary.sh" "$WORK/rb" 2>/dev/null
+if ! grep -q "Directory Readers" "$WORK/rb/appreg-report.md"; then ok "summary: reader roles not listed as privileged"; else bad "summary: reader roles not listed as privileged"; fi
 if ! bash "$SCRIPT" -R "$WORK/nonexistent" >/dev/null 2>&1; then ok "rebuild rejects a folder without raw data"; else bad "rebuild rejects a folder without raw data"; fi
 if ! bash "$SCRIPT" -R "$WORK/rb" -A >/dev/null 2>&1; then ok "-R can't be combined with -A"; else bad "-R can't be combined with -A"; fi
 
