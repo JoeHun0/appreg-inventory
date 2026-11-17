@@ -169,6 +169,10 @@ read -r -d '' JQ_REPORT <<'JQ'
   "",
   "Inventory of \($detected) (appreg-inventory). Counts only.",
   "",
+  ( if $scope.rootAccess == false then
+      "> **Warning: incomplete inventory.** The account that ran it couldn't read the tenant root management group (no Reader role there, or a PIM role that wasn't active), so Azure role assignments cover only the subscriptions it could see. Entra ID data is complete. Re-run with the role active.",
+      ""
+    else empty end ),
   "Apps in this inventory: **\($n)**" + (if $all != "" then " (of \($all) app registrations read)" else "" end) + ".",
   "",
   "## By risk",
@@ -230,7 +234,8 @@ read -r -d '' JQ_REPORT <<'JQ'
    | if length == 0 then "| (none) | |" else .[] | "| \(.[0] | risklabel) | \(length) |" end)
 JQ
 
-ARGS=(--slurpfile model "$DIR/raw/model.jsonl" --slurpfile apps "$DIR/raw/apps.jsonl"
+SCOPE=$(cat "$DIR/raw/scope.json" 2>/dev/null || echo '{}')   # absent in runs made before it existed
+ARGS=(--slurpfile model "$DIR/raw/model.jsonl" --slurpfile apps "$DIR/raw/apps.jsonl" --argjson scope "$SCOPE"
       --argjson days "$DAYS" --arg all "$ALL" --arg detected "$DETECTED" --arg sep "$SEP")
 # The rows go through a file: as a command-line argument they would hit the OS limit
 # (128 KB per argument on Linux, 32 KB per command line on Windows).

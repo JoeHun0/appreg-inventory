@@ -62,6 +62,9 @@ J
 
   rest*)
     case "$url" in
+      */providers/Microsoft.Management/managementGroups/$TENANT\?*)
+        if [[ -n "${MOCK_NO_ROOT:-}" ]]; then echo "ERROR: (AuthorizationFailed) simulated" >&2; exit 1; fi
+        echo '{"name":"root"}' ;;
       */applications/objA/owners*)
         echo '{"value":[{"id":"u1","displayName":"Admin One","userPrincipalName":"admin1@example.test"},{"id":"sp9","displayName":"automation-sp"}]}' ;;
       */applications/*/owners*) echo '{"value":[]}' ;;

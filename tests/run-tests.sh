@@ -125,6 +125,14 @@ echo "argument checks"
 if ! bash "$SCRIPT" -a not-a-guid >/dev/null 2>&1; then ok "rejects a malformed app ID"; else bad "rejects a malformed app ID"; fi
 if bash "$SCRIPT" -h | grep -q "READ-ONLY inventory"; then ok "-h prints help"; else bad "-h prints help"; fi
 
+echo "tenant root access check"
+bash "$HERE/../appreg-summary.sh" -o "$WORK/rootok" "$WORK/all" 2>/dev/null
+if ! grep -q "incomplete inventory" "$WORK/rootok/appreg-report.md"; then ok "full access: no warning in the report"; else bad "full access: no warning in the report"; fi
+MOCK_NO_ROOT=1 bash "$SCRIPT" -A -o "$WORK/noroot" 2>"$WORK/norootlog"
+if grep -q "can't read the tenant root management group" "$WORK/norootlog"; then ok "no root access: warning on screen"; else bad "no root access: warning on screen"; fi
+bash "$HERE/../appreg-summary.sh" "$WORK/noroot" 2>/dev/null
+if grep -q "Warning: incomplete inventory" "$WORK/noroot/appreg-report.md"; then ok "no root access: warning in the report"; else bad "no root access: warning in the report"; fi
+
 echo "portability"
 if ! (cd "$HERE/.." && grep -nE '(fromdateiso8601|fromdate|strptime|mktime|strftime|todate|dateadd)\b' appreg-inventory.sh appreg-summary.sh | grep -v '^[^:]*:[0-9]*:[[:space:]]*#'); then
   ok "no jq date built-ins (missing in some Windows jq builds)"

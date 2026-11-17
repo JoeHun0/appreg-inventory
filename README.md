@@ -90,6 +90,9 @@ These don't show on the app registration, so they're easy to miss (see [Output](
   - Root-scope (`/`) assignments are visible only with
     [elevated access](https://learn.microsoft.com/azure/role-based-access-control/elevate-access-global-admin).
     Without it they're skipped with a warning.
+  - If the account can't read the tenant root management group, for example because a **PIM role isn't
+    active**, the script warns at the start and the summary report says the inventory is incomplete.
+    Activate the role and run `az login` again before you start.
 
 ## Usage
 
