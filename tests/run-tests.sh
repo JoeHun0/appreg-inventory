@@ -59,6 +59,15 @@ bash "$SCRIPT" -a 12345678-1234-1234-1234-123456789abc -o "$WORK/one" 2>/dev/nul
 lines "$WORK/one/summary.tsv" "one app" 1
 if [[ ! -e "$WORK/one/sp_own_secrets.tsv" ]]; then ok "no tenant-wide SP report in -a mode"; else bad "no tenant-wide SP report in -a mode"; fi
 
+echo "Windows (Git Bash: CRLF output from az and jq, MSYS path rewriting)"
+REAL_JQ=$(type -P jq) PATH="$HERE/mock-windows:$PATH" bash "$SCRIPT" -o "$WORK/win" 2>"$WORK/winlog"
+if grep -q "Bad Request" "$WORK/winlog"; then
+  bad "no 'Bad Request' errors"; grep -m3 "Bad Request" "$WORK/winlog"
+else ok "no 'Bad Request' errors"; fi
+for f in summary azure_rbac entra_roles api_permissions sp_own_secrets; do
+  if cmp -s "$OUT/$f.tsv" "$WORK/win/$f.tsv"; then ok "$f.tsv same as on Linux"; else bad "$f.tsv same as on Linux"; fi
+done
+
 echo "argument checks"
 if ! bash "$SCRIPT" -a not-a-guid >/dev/null 2>&1; then ok "rejects a malformed app ID"; else bad "rejects a malformed app ID"; fi
 if bash "$SCRIPT" -h | grep -q "READ-ONLY inventory"; then ok "-h prints help"; else bad "-h prints help"; fi
