@@ -27,6 +27,9 @@
 #   ./appreg-inventory.sh -a <appId> ...  only these apps (-a can be repeated)
 #   ./appreg-inventory.sh -o <dir>        output folder
 #                                         (default ./appreg-inventory-YYYYMMDD-HHMM)
+#   ./appreg-inventory.sh -R <dir>        rebuild the ratings and reports of an earlier
+#                                         run from its raw/ data - no Azure calls, takes
+#                                         seconds (e.g. after the risk lists changed)
 #
 # Output (tab-separated, opens in LibreOffice Calc / Excel):
 #   summary.tsv          one row per app, highest risk first
@@ -49,11 +52,13 @@ usage() { awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"; }
 APP_IDS=()
 INCLUDE_ALL=0
 OUTDIR=""
-while getopts ":a:Ao:h" opt; do
+REBUILD=""
+while getopts ":a:Ao:R:h" opt; do
   case "$opt" in
     a) APP_IDS+=("$OPTARG") ;;
     A) INCLUDE_ALL=1 ;;
     o) OUTDIR="$OPTARG" ;;
+    R) REBUILD="$OPTARG" ;;
     h) usage; exit 0 ;;
     *) echo "Unknown option. Use -h for help." >&2; exit 2 ;;
   esac
@@ -68,8 +73,10 @@ for id in "${APP_IDS[@]}"; do
   [[ "$id" =~ $GUID_RE ]] || die "not an application (client) ID: $id"
 done
 
-command -v az >/dev/null || die "az CLI not found"
 command -v jq >/dev/null || die "jq not found (sudo apt install jq)"
+[[ -z "$REBUILD" ]] || { ((${#APP_IDS[@]} == 0 && INCLUDE_ALL == 0)) && [[ -z "$OUTDIR" ]]; } \
+  || die "-R can't be combined with -a, -A or -o"
+[[ -n "$REBUILD" ]] || command -v az >/dev/null || die "az CLI not found"
 
 # Windows (Git Bash, MSYS2, WSL calling the Windows az): Windows builds of az and jq
 # end their output lines with CRLF, and MSYS rewrites arguments that start with "/"
@@ -77,18 +84,28 @@ command -v jq >/dev/null || die "jq not found (sudo apt install jq)"
 # Both make Azure answer "Bad Request". Strip the CRs and turn the rewriting off for az.
 az() { MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' command az "$@" | tr -d '\r'; }
 jq() { command jq "$@" | tr -d '\r'; }
-az extension show --name resource-graph --only-show-errors >/dev/null 2>&1 \
-  || die "resource-graph extension missing: az extension add --name resource-graph"
-TENANT_ID=$(az account show --query tenantId -o tsv --only-show-errors </dev/null 2>/dev/null) \
-  && [[ -n "$TENANT_ID" ]] || die "not logged in: run az login"
-
 umask 077
-OUTDIR=${OUTDIR:-"./appreg-inventory-$(date +%Y%m%d-%H%M)"}
-RAW="$OUTDIR/raw"
-mkdir -p "$RAW" || die "cannot create $RAW"
-for f in apps_all apps sps owners groups approles resources rbac roledefs dirdefs dirroles; do
-  : > "$RAW/$f.jsonl"
-done
+RAWFILES="apps_all apps sps owners groups approles resources rbac roledefs dirdefs dirroles"
+
+if [[ -n "$REBUILD" ]]; then
+  OUTDIR="$REBUILD"
+  RAW="$OUTDIR/raw"
+  for f in $RAWFILES; do
+    [[ -f "$RAW/$f.jsonl" ]] || die "$RAW/$f.jsonl not found - is $OUTDIR an appreg-inventory output folder?"
+  done
+  log "Rebuilding the ratings and reports in $OUTDIR from raw/ (no Azure calls)..."
+else
+  az extension show --name resource-graph --only-show-errors >/dev/null 2>&1 \
+    || die "resource-graph extension missing: az extension add --name resource-graph"
+  TENANT_ID=$(az account show --query tenantId -o tsv --only-show-errors </dev/null 2>/dev/null) \
+    && [[ -n "$TENANT_ID" ]] || die "not logged in: run az login"
+  OUTDIR=${OUTDIR:-"./appreg-inventory-$(date +%Y%m%d-%H%M)"}
+  RAW="$OUTDIR/raw"
+  mkdir -p "$RAW" || die "cannot create $RAW"
+  for f in $RAWFILES; do
+    : > "$RAW/$f.jsonl"
+  done
+fi
 
 GRAPH="https://graph.microsoft.com/v1.0"
 
@@ -119,6 +136,7 @@ arg_all() {
   done
 }
 
+if [[ -z "$REBUILD" ]]; then   # steps 1-6 read from Azure; -R skips them
 # ---------------------------------------------------------------- 1. apps
 # The JMESPath projection runs inside az: secret values and hints never leave it.
 APP_QUERY='[].{objectId:id, appId:appId, name:displayName, created:createdDateTime, secrets:passwordCredentials[].{keyId:keyId, description:displayName, start:startDateTime, end:endDateTime}, certs:keyCredentials[].{keyId:keyId, end:endDateTime}}'
@@ -247,6 +265,8 @@ fi
 # PIM-eligible Entra roles are not read: the Azure CLI's Graph token never carries the
 # RoleEligibilitySchedule / RoleManagement read scopes, whatever the user's own roles are.
 # Check them in the portal (Entra ID > Roles and administrators > Eligible assignments).
+
+fi   # end of steps 1-6
 
 # ---------------------------------------------------------------- 7. build the model
 log "Building reports..."
@@ -379,7 +399,8 @@ jq -r -s "$JQ_LABEL"'
    | sort_by(-.rating, (.app | ascii_downcase), .perm)[]
    | [(.rating | risklabel), .app, .appId, .api, .perm] | @tsv)' "$RAW/model.jsonl" > "$OUTDIR/api_permissions.tsv"
 
-if ((${#APP_IDS[@]} == 0)); then
+# not in -a mode; on -R only if the original run made it
+if { [[ -z "$REBUILD" ]] && ((${#APP_IDS[@]} == 0)); } || [[ -e "$OUTDIR/sp_own_secrets.tsv" ]]; then
   jq -r -s '
     (["servicePrincipal", "appId", "type", "singleSignOnMode", "ownPasswordCredentials", "ownKeyCredentials"] | @tsv),
     (map(select(.ownSecrets > 0)) | sort_by(.name | ascii_downcase)[]

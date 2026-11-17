@@ -100,11 +100,17 @@ cd appreg-inventory
 ./appreg-inventory.sh -A                      # all app registrations
 ./appreg-inventory.sh -a <appId> -a <appId>   # only these applications (client IDs)
 ./appreg-inventory.sh -o ~/reports/2026-11    # choose the output folder
+./appreg-inventory.sh -R appreg-inventory-20261117-0930   # rebuild ratings and reports from raw/
 ./appreg-inventory.sh -h                      # help
 ```
 
 Progress goes to stderr. The script makes about three Microsoft Graph calls per app, so a few hundred
 apps take roughly 10–20 minutes. Run it from a folder outside any git repository.
+
+**Rebuild (`-R`).** Re-runs only the rating and report steps on the `raw/` data of an earlier run. It
+makes no Azure calls and takes seconds. Use it after updating the script (new ratings or fixes) or after
+editing the risk lists, then run `appreg-summary.sh` again. Secret expiry is judged against the time of
+the rebuild, so secrets that expired since the original run count as expired.
 
 ## Output
 
@@ -134,7 +140,8 @@ gets the highest one.
 | **MEDIUM** | Any role on a resource group or resource, or a non-privileged role higher up | Reader roles (Directory Readers, Global Reader, …) | Read permissions (e.g. `User.Read.All`) |
 | **LOW** | No roles | – | Default access only |
 
-The full lists are at the top of the `JQ_MODEL` block in the script. Adjust them to your own threat model.
+The full lists are at the top of the `JQ_MODEL` block in the script. Adjust them to your own threat model,
+then apply them to an existing inventory with `-R` (see [Usage](#usage)).
 
 ## How it works
 

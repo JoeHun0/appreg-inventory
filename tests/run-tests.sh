@@ -70,6 +70,21 @@ for f in summary azure_rbac entra_roles api_permissions sp_own_secrets; do
   if cmp -s "$OUT/$f.tsv" "$WORK/win/$f.tsv"; then ok "$f.tsv same as on Linux"; else bad "$f.tsv same as on Linux"; fi
 done
 
+echo "-R (rebuild from raw/)"
+cp -r "$WORK/all" "$WORK/rb"
+for f in "$WORK/rb"/*.tsv "$WORK/rb/raw/model.jsonl"; do : > "$f"; done   # stale outputs must be rebuilt
+: > "$MOCK_CALLS"
+if bash "$SCRIPT" -R "$WORK/rb" 2>"$WORK/rblog"; then ok "rebuild exits 0"; else bad "rebuild exits 0"; cat "$WORK/rblog"; fi
+if [[ ! -s "$MOCK_CALLS" ]]; then ok "rebuild makes no az calls"; else bad "rebuild makes no az calls"; head -3 "$MOCK_CALLS"; fi
+same=1; for f in summary azure_rbac entra_roles api_permissions sp_own_secrets; do cmp -s "$WORK/all/$f.tsv" "$WORK/rb/$f.tsv" || { same=0; echo "    differs: $f.tsv"; }; done
+if ((same)); then ok "rebuild reproduces every report"; else bad "rebuild reproduces every report"; fi
+# change the data: the group's Entra role becomes Directory Readers, which is rated MEDIUM
+sed -i 's/"displayName":"Application Administrator"/"displayName":"Directory Readers"/' "$WORK/rb/raw/dirdefs.jsonl"
+bash "$SCRIPT" -R "$WORK/rb" 2>/dev/null
+has "$WORK/rb/entra_roles.tsv" "rebuild re-rates: reader role is MEDIUM" MEDIUM terraform-deploy appA
+if ! bash "$SCRIPT" -R "$WORK/nonexistent" >/dev/null 2>&1; then ok "rebuild rejects a folder without raw data"; else bad "rebuild rejects a folder without raw data"; fi
+if ! bash "$SCRIPT" -R "$WORK/rb" -A >/dev/null 2>&1; then ok "-R can't be combined with -A"; else bad "-R can't be combined with -A"; fi
+
 echo "appreg-summary.sh"
 SUM="$HERE/../appreg-summary.sh"
 S="$WORK/sum"
