@@ -3,3 +3,5 @@ appreg-inventory-*/
 *.tsv
 raw/
 *.jsonl
+appreg-report.md
+appreg-worklist.csv

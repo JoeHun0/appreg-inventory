@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
-# appreg-summary.sh - turns an appreg-inventory output folder into a short summary
-# in Markdown: counts by risk, secret validity and lifetime, ownership, why apps are
-# CRITICAL, the most common privileged roles and permissions, and cleanup candidates.
+# appreg-summary.sh - turns an appreg-inventory output folder into two files:
+#
+#   appreg-report.md     counts only, no app names, IDs or owners - safe to put into a report:
+#                 risk levels, secret validity and lifetime, ownership, why apps are
+#                 CRITICAL, the most common privileged roles and permissions, cleanup
+#   appreg-worklist.csv  one row per thing to fix, with app names, details and what to
+#                 do - internal. item_id (category:appId) stays the same between runs, so
+#                 the file can feed a tracking spreadsheet (Excel: Data > From Text/CSV)
+#                 and statuses kept there survive a refresh.
 #
 # Usage:
-#   ./appreg-summary.sh <output folder>        counts only - safe to paste into a report
-#   ./appreg-summary.sh -n <output folder>     also list the CRITICAL and HIGH apps and
-#                                              the secrets that expire soon (internal use)
-#   ./appreg-summary.sh -d 60 <output folder>  "expires soon" window in days (default 30)
+#   ./appreg-summary.sh <output folder>          writes both files into that folder
+#   ./appreg-summary.sh -o <dir> <output folder> writes them into <dir> instead
+#   ./appreg-summary.sh -d 60 <output folder>    "expires soon" window in days (default 30)
+#   ./appreg-summary.sh -s ';' <output folder>   CSV separator (default ","; use ";" if Excel
+#                                                with a Hungarian or German locale opens it)
 #
 # Reads raw/model.jsonl and raw/apps.jsonl from the folder. Needs only jq; no Azure access.
 
@@ -19,12 +26,14 @@ set -uo pipefail
 
 usage() { awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"; }
 
-NAMES=0
 DAYS=30
-while getopts ":nd:h" opt; do
+SEP=","
+OUT=""
+while getopts ":d:s:o:h" opt; do
   case "$opt" in
-    n) NAMES=1 ;;
     d) DAYS="$OPTARG" ;;
+    s) SEP="$OPTARG" ;;
+    o) OUT="$OPTARG" ;;
     h) usage; exit 0 ;;
     *) echo "Unknown option. Use -h for help." >&2; exit 2 ;;
   esac
@@ -34,6 +43,7 @@ shift $((OPTIND - 1))
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 (($# == 1)) || die "give one appreg-inventory output folder (-h for help)"
 [[ "$DAYS" =~ ^[0-9]+$ ]] || die "-d needs a number of days"
+[[ "$SEP" == "," || "$SEP" == ";" || "$SEP" == $'\t' ]] || die "-s must be , or ; or a tab"
 DIR="$1"
 for f in model apps; do
   [[ -s "$DIR/raw/$f.jsonl" ]] || die "$DIR/raw/$f.jsonl not found - is this an appreg-inventory output folder?"
@@ -41,16 +51,22 @@ done
 command -v jq >/dev/null || die "jq not found (sudo apt install jq)"
 jq() { command jq "$@" | tr -d '\r'; }   # Windows jq ends lines with CRLF
 
+OUT=${OUT:-$DIR}
+umask 077
+mkdir -p "$OUT" || die "cannot create $OUT"
 ALL=$( [[ -s "$DIR/raw/apps_all.jsonl" ]] && wc -l < "$DIR/raw/apps_all.jsonl" | tr -d ' ' || echo "")
+DETECTED=$(date -r "$DIR/raw/model.jsonl" +%Y-%m-%d 2>/dev/null || date +%Y-%m-%d)
 
-jq -n -r --slurpfile model "$DIR/raw/model.jsonl" --slurpfile apps "$DIR/raw/apps.jsonl" \
-  --argjson days "$DAYS" --argjson names "$NAMES" --arg all "$ALL" --arg dir "$DIR" '
+# ---------------------------------------------------------------- shared jq: the per-app model
+read -r -d '' JQ_PRE <<'JQ'
 def ts: if . == null then null
         else (sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | try fromdateiso8601 catch null) end;
 def risklabel: ["", "LOW", "MEDIUM", "HIGH", "CRITICAL"][.];
 def pct($n; $of): if $of == 0 then "0%" else "\(($n * 100 / $of) | round)%" end;
 def top($n): group_by(.) | map({k: .[0], c: length}) | sort_by(-.c, .k) | .[:$n];
 def table: if length == 0 then "| (none) | |" else map("| \(.k) | \(.c) |") | join("\n") end;
+def rights: [.rbac[] | select(.rating >= 3) | "\(.role) @ \(.level)"] + [.entra[] | select(.rating >= 3) | .role]
+            + [.api[] | select(.rating >= 3) | .perm] | unique | join("; ");
 
 now as $now
 | ($apps | map({key: .appId, value: (.secrets // [])}) | from_entries) as $secretsBy
@@ -67,12 +83,80 @@ now as $now
         }
       }
   ] as $A
+JQ
+
+# ---------------------------------------------------------------- worklist rows
+read -r -d '' JQ_ROWS <<'JQ'
+| def item($sev; $cat; $issue; $action; $details):
+    {sev: $sev, cat: $cat, issue: $issue, action: $action, details: $details};
+[ $A[] | . as $a
+  | ($a.valid | map(.e) | min) as $nextE
+  | ( (if $a.risk >= 3 and ($a.valid | length) > 0 then
+        item($a.risk; "APP-PRIV-SECRET"; "Privileged app with a valid client secret";
+          "Replace the client secret with workload identity federation or a managed identity. Until then: check the app's sign-in logs and secret history for misuse, rotate the secret, and remove rights it doesn't need.";
+          "")
+      else empty end),
+      (if $a.risk >= 3 and ($a.valid | length) == 0 then
+        item($a.risk - 1; "APP-PRIV-REVIEW"; "Privileged app without a valid client secret" + (if $a.certs > 0 then " (has certificates)" else "" end);
+          "Review whether the app needs these rights and remove the rest. If it has a certificate, check where the private key is stored.";
+          "")
+      else empty end),
+      (if ($a.owners | length) == 0 and $a.risk >= 2 then
+        item($a.risk - 1; "APP-NO-OWNER"; "No owner or accountable team";
+          "Find and record the accountable team (app notes, custom security attributes or CMDB). Don't add people as Entra owners of privileged apps: owners can add secrets.";
+          "")
+      else empty end),
+      (if $a.risk >= 2 and any($a.valid[]; .s != null and .e - .s > 366 * 86400) then
+        item(if $a.risk >= 3 then 2 else 1 end; "APP-LONG-SECRET"; "Client secret valid for more than a year";
+          "Rotate to a short-lived secret (6-12 months at most) or migrate to federation. Enforce a maximum secret lifetime with an app management policy.";
+          "")
+      else empty end),
+      (if $nextE != null and $nextE < $now + $days * 86400 then
+        item(1; "APP-EXPIRING"; "Client secret expires within \($days) days";
+          "Plan the rotation, or migrate to federation before it expires, to avoid an outage.";
+          "Expires: \($a.valid | map(.end) | sort | first).")
+      else empty end),
+      (if $a.secrets > 0 and ($a.valid | length) == 0 and ($a.noEnd | length) == 0 then
+        item(1; "APP-EXPIRED-ONLY"; "Only expired client secrets";
+          "Delete the expired secrets. If the app is unused (check sign-in logs), disable its service principal and delete the app later.";
+          "Expired secrets: \($a.expired).")
+      else empty end),
+      (if $a.spEnabled == false and ($a.valid | length) > 0 then
+        item(1; "APP-DISABLED-SECRET"; "Service principal disabled but a client secret is still valid";
+          "Remove the secret, and delete the app if it's no longer needed.";
+          "Valid secrets: \($a.valid | length).")
+      else empty end)
+    )
+  | . + {a: $a}
+]
+| map(.sev |= ([., 1] | max))
+| sort_by(-.sev, .cat, (.a.name | ascii_downcase))
+JQ
+
+# rendering of the rows as CSV
+read -r -d '' JQ_CSV <<'JQ'
+| def csvrow: map(if . == null then "" else tostring end
+                  | if test("^[=+\\-@\t\r]") then "'" + . else . end   # no formulas in Excel
+                  | gsub("\""; "\"\"") | "\"" + . + "\"") | join($sep);
+  (["item_id", "severity", "priority", "category", "issue", "action", "app_name", "app_id", "app_risk",
+    "valid_secrets", "next_secret_expiry", "longest_secret_lifetime_days", "certificates", "sp_enabled",
+    "owners", "privileged_rights", "details", "detected"] | csvrow),
+  (.[] | .a as $a
+       | ["\(.cat):\($a.appId)", (.sev | risklabel), (5 - .sev), .cat, .issue, .action, $a.name, $a.appId,
+          ($a.risk | risklabel), ($a.valid | length), ($a.valid | map(.end) | sort | first // ""),
+          ([$a.valid[] | select(.s != null) | (.e - .s) / 86400 | floor] | max // ""), $a.certs,
+          (if $a.spEnabled == true then "yes" elif $a.spEnabled == false then "no" else "no service principal" end),
+          ($a.owners | join(", ")), ($a | rights), .details, $detected]
+       | csvrow)
+JQ
+
+# ---------------------------------------------------------------- report.md
+read -r -d '' JQ_REPORT <<'JQ'
 | ($A | length) as $n
 | [$A[] | .valid[]] as $V
-| (
-  "# appreg-inventory summary",
+| "# App registrations with client secrets",
   "",
-  "Source: `\($dir)`. Generated \(now | strftime("%Y-%m-%d %H:%M")) UTC.",
+  "Inventory of \($detected) (appreg-inventory). Counts only.",
   "",
   "Apps in this inventory: **\($n)**" + (if $all != "" then " (of \($all) app registrations read)" else "" end) + ".",
   "",
@@ -86,7 +170,7 @@ now as $now
   "## Client secrets",
   "",
   "- Apps with at least one valid secret: **\([$A[] | select(.valid | length > 0)] | length)** (\(pct([$A[] | select(.valid | length > 0)] | length; $n)))",
-  "- Apps with only expired secrets (delete the secrets, or the app if unused): **\([$A[] | select(.secrets > 0 and (.valid | length) == 0 and (.noEnd | length) == 0)] | length)**",
+  "- Apps with only expired secrets: **\([$A[] | select(.secrets > 0 and (.valid | length) == 0 and (.noEnd | length) == 0)] | length)**",
   "- Valid secrets in total: **\($V | length)**",
   "- Valid secrets expiring within \($days) days: **\([$V[] | select(.e < $now + $days * 86400)] | length)**",
   "- Valid secrets with a lifetime over 1 year: **\([$V[] | select(.s != null and .e - .s > 366 * 86400)] | length)**, over 2 years: **\([$V[] | select(.s != null and .e - .s > 731 * 86400)] | length)**",
@@ -127,21 +211,24 @@ now as $now
   "- Disabled or missing service principal: **\([$A[] | select(.spEnabled != true)] | length)**",
   "",
   "LOW means no Azure role, Entra role or application permission was found. Delegated permissions are not checked, so confirm an app is unused (sign-in logs) before deleting it.",
-  ( if $names == 1 then
-      "",
-      "## CRITICAL and HIGH apps (internal - contains names)",
-      "",
-      "| Risk | App | App ID | Valid secrets | Owners | Reasons |",
-      "|---|---|---|---|---|---|",
-      ( $A | map(select(.risk >= 3)) | sort_by(-.risk, (.name | ascii_downcase))[]
-        | "| \(.risk | risklabel) | \(.name) | \(.appId) | \(.valid | length) | \(if (.owners | length) == 0 then "none" else (.owners | join(", ")) end) | \(
-            ([.rbac[] | select(.rating >= 3) | "\(.role) @ \(.level)"] + [.entra[] | select(.rating >= 3) | .role]
-             + [.api[] | select(.rating >= 3) | .perm] | unique | join("; "))) |" ),
-      "",
-      "## Secrets expiring within \($days) days (internal - contains names)",
-      "",
-      "| Expires | App | Risk |", "|---|---|---|",
-      ( [$A[] | . as $a | .valid[] | select(.e < $now + $days * 86400) | {end, name: $a.name, risk: $a.risk}]
-        | if length == 0 then "| (none) | | |" else sort_by(.end)[] | "| \(.end) | \(.name) | \(.risk | risklabel) |" end )
-    else empty end )
-)'
+  "",
+  "## Worklist",
+  "",
+  "| Severity | Items |", "|---|---|",
+  ($items | map(.sev) | group_by(.) | reverse
+   | if length == 0 then "| (none) | |" else .[] | "| \(.[0] | risklabel) | \(length) |" end)
+JQ
+
+ARGS=(--slurpfile model "$DIR/raw/model.jsonl" --slurpfile apps "$DIR/raw/apps.jsonl"
+      --argjson days "$DAYS" --arg all "$ALL" --arg detected "$DETECTED" --arg sep "$SEP")
+ITEMS=$(jq -n -c "${ARGS[@]}" "$JQ_PRE $JQ_ROWS") || die "building the worklist failed"
+{ printf '\xEF\xBB\xBF'; jq -n -r --argjson rows "$ITEMS" --arg sep "$SEP" --arg detected "$DETECTED" \
+    'def risklabel: ["", "LOW", "MEDIUM", "HIGH", "CRITICAL"][.];
+    def rights: [.rbac[] | select(.rating >= 3) | "\(.role) @ \(.level)"] + [.entra[] | select(.rating >= 3) | .role]
+                + [.api[] | select(.rating >= 3) | .perm] | unique | join("; "); $rows '"$JQ_CSV"; } > "$OUT/appreg-worklist.csv" \
+  || die "writing worklist.csv failed"
+jq -n -r "${ARGS[@]}" --argjson items "$ITEMS" "$JQ_PRE $JQ_REPORT" > "$OUT/appreg-report.md" \
+  || die "building report.md failed"
+
+printf 'appreg-report.md     %s  (counts only - safe for the report)\n' "$OUT/appreg-report.md" >&2
+printf 'appreg-worklist.csv  %s  (%s items, with names - internal)\n' "$OUT/appreg-worklist.csv" "$(jq -r 'length' <<<"$ITEMS")" >&2

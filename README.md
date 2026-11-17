@@ -139,27 +139,28 @@ The full lists are at the top of the `JQ_MODEL` block in the script. Adjust them
 - **Managed identities** aren't included because they can't have client secrets. Use `-A`, or adapt the
   script, if you need them.
 
-## Summary for reports
+## Report and worklist
 
-`appreg-summary.sh` turns an output folder into a short Markdown summary. It needs only `jq`, no Azure
-access:
+`appreg-summary.sh` turns an output folder into two files. It needs only `jq`, no Azure access:
 
 ```bash
-./appreg-summary.sh appreg-inventory-20261117-0930              # counts only
-./appreg-summary.sh -n appreg-inventory-20261117-0930           # plus the CRITICAL/HIGH apps by name
-./appreg-summary.sh -d 60 appreg-inventory-20261117-0930 > summary.md
+./appreg-summary.sh appreg-inventory-20261117-0930             # writes both files into that folder
+./appreg-summary.sh -s ';' appreg-inventory-20261117-0930      # ";" as CSV separator
+./appreg-summary.sh -o ~/reports appreg-inventory-20261117-0930   # writes them somewhere else
 ```
 
-It shows:
-- apps per risk level, with how many have a valid secret, no owner, or a disabled or missing service principal
-- secret validity: valid vs only expired, expiring soon (`-d`, default 30 days), lifetime over 1 and 2 years, and not rotated for a year
-- why apps are CRITICAL: Azure role at root/management-group scope, tier-0 Entra role, or takeover API permission
-- the 10 most common privileged Azure roles, Entra roles and API permissions
-- cleanup candidates
+| File | Contents | Share? |
+|---|---|---|
+| `appreg-report.md` | Counts only: risk levels, secret validity and lifetime, ownership, why apps are CRITICAL, the most common privileged roles and permissions, cleanup candidates | Yes. No names, IDs or IP addresses, so it can go into a report or ticket |
+| `appreg-worklist.csv` | One row per thing to fix, with severity, priority (1 = most urgent), category, issue, the action to take, and the details needed to do it: app name and ID, app risk, valid secrets, next expiry, longest secret lifetime, certificates, service principal state, owners, privileged rights | Internal only. Share single rows with the people who fix them |
 
-**Without `-n`, the summary contains no app names, IDs or owners**, so it can go into a report or
-ticket. With `-n` it lists the CRITICAL and HIGH apps and the secrets that expire soon. Treat that
-version like the inventory itself.
+Worklist categories: `APP-PRIV-SECRET` (privileged app with a valid secret), `APP-PRIV-REVIEW`, `APP-NO-OWNER`, `APP-LONG-SECRET`, `APP-EXPIRING` (window set with `-d`, default 30 days), `APP-EXPIRED-ONLY`, `APP-DISABLED-SECRET`.
+
+Notes on the CSV:
+- **`item_id` (category:appId) stays the same between runs.** Use it as the key in a tracking spreadsheet: load the CSV with *Data → From Text/CSV* (Power Query), keep columns like assignee, status and due date in a separate table joined on `item_id`, and refresh after the next run. Fixed items drop out of the CSV.
+- **Encoding:** UTF-8 with a byte-order mark, so Excel shows accented characters correctly. Values that start with `=`, `+`, `-` or `@` get a leading `'`, so names can't run as Excel formulas.
+- **Separator:** `,` by default. Excel with a Hungarian or German locale expects `;` when you open the file by double-clicking, so use `-s ';'` for that.
+- `-d 60` sets the "expires soon" window in days (default 30).
 
 ## After the inventory
 

@@ -20,6 +20,7 @@ has() {
   local pattern; pattern=$(IFS=$'\t'; echo "$*")
   if grep -qF -- "$pattern" "$file"; then ok "$desc"; else bad "$desc"; fi
 }
+is() { if [[ "$2" == "$3" ]]; then ok "$1"; else bad "$1 (got '$2', expected '$3')"; fi; }
 lines() {  # lines <file> <description> <expected data rows>
   local n; n=$(($(wc -l < "$1") - 1))
   if [[ "$n" == "$3" ]]; then ok "$2"; else bad "$2 (got $n rows, expected $3)"; fi
@@ -71,16 +72,29 @@ done
 
 echo "appreg-summary.sh"
 SUM="$HERE/../appreg-summary.sh"
-bash "$SUM" "$WORK/all" > "$WORK/sum.md" 2>"$WORK/sumlog" && ok "summary exits 0" || { bad "summary exits 0"; cat "$WORK/sumlog"; }
-if grep -qF "| CRITICAL | 2 | 2 | 1 | 1 |" "$WORK/sum.md"; then ok "risk table counts"; else bad "risk table counts"; fi
-if grep -qF "Valid secrets in total: **2**" "$WORK/sum.md"; then ok "valid secrets counted"; else bad "valid secrets counted"; fi
-if grep -qF "lifetime over 1 year: **1**, over 2 years: **1**" "$WORK/sum.md"; then ok "secret lifetimes"; else bad "secret lifetimes"; fi
-if grep -qF "root or management-group scope: **2**" "$WORK/sum.md"; then ok "CRITICAL reasons"; else bad "CRITICAL reasons"; fi
-if grep -qF "| Owner @ managementGroup | 1 |" "$WORK/sum.md"; then ok "top Azure roles"; else bad "top Azure roles"; fi
-if ! grep -qE "terraform-deploy|billing-reader|appA|admin1@" "$WORK/sum.md"; then ok "no names without -n"; else bad "no names without -n"; fi
-bash "$SUM" -n "$WORK/all" > "$WORK/sumn.md" 2>/dev/null
-if grep -qF "| CRITICAL | terraform-deploy | appA |" "$WORK/sumn.md"; then ok "-n lists CRITICAL apps"; else bad "-n lists CRITICAL apps"; fi
-if bash "$SUM" -n -d 40000 "$WORK/all" | grep -qF "| 2099-01-01T00:00:00Z | terraform-deploy | CRITICAL |"; then ok "-d widens the expiry window"; else bad "-d widens the expiry window"; fi
+S="$WORK/sum"
+bash "$SUM" -o "$S" "$WORK/all" 2>"$WORK/sumlog" && ok "summary exits 0" || { bad "summary exits 0"; cat "$WORK/sumlog"; }
+R="$S/appreg-report.md"; C="$S/appreg-worklist.csv"
+line() { if grep -qF -- "$2" "$3"; then ok "$1"; else bad "$1"; fi; }
+line "report: risk table"          "| CRITICAL | 2 | 2 | 1 | 1 |" "$R"
+line "report: valid secrets"       "Valid secrets in total: **2**" "$R"
+line "report: secret lifetimes"    "lifetime over 1 year: **1**, over 2 years: **1**" "$R"
+line "report: CRITICAL reasons"    "root or management-group scope: **2**" "$R"
+line "report: top Azure roles"     "| Owner @ managementGroup | 1 |" "$R"
+line "report: worklist counts"     "| CRITICAL | 2 |" "$R"
+if ! grep -qE "terraform-deploy|billing-reader|appA|appC|admin1@" "$R"; then ok "report: no names or IDs"; else bad "report: no names or IDs"; fi
+if [[ "$(head -c3 "$C" | od -An -tx1 | tr -d ' ')" == efbbbf ]]; then ok "worklist: UTF-8 BOM for Excel"; else bad "worklist: UTF-8 BOM for Excel"; fi
+line "worklist: app columns"       '"item_id","severity","priority","category","issue","action","app_name","app_id","app_risk"' "$C"
+is "worklist: 5 items"             "$(($(wc -l < "$C") - 1))" 5
+line "worklist: privileged secret" '"APP-PRIV-SECRET:appA","CRITICAL","1","APP-PRIV-SECRET"' "$C"
+line "worklist: no owner, one level lower" '"APP-NO-OWNER:appC","HIGH","2"' "$C"
+line "worklist: rights column"     '"Application Administrator; Application.ReadWrite.All; Contributor @ subscription; Owner @ managementGroup"' "$C"
+bash "$SUM" -d 40000 -s ';' -o "$WORK/sum2" "$WORK/all" 2>/dev/null
+line "-s ';' separator"            '"APP-EXPIRING:appA";"LOW";"4"' "$WORK/sum2/appreg-worklist.csv"
+mkdir -p "$WORK/evil/raw" && cp "$WORK/all/raw/apps.jsonl" "$WORK/evil/raw/" \
+  && sed 's/"name":"terraform-deploy"/"name":"=HYPERLINK(\\"x\\")"/' "$WORK/all/raw/model.jsonl" > "$WORK/evil/raw/model.jsonl"
+bash "$SUM" "$WORK/evil" 2>/dev/null
+line "worklist: formula-like names neutralised" '"'"'"'=HYPERLINK(""x"")"' "$WORK/evil/appreg-worklist.csv"
 if ! bash "$SUM" "$WORK/nonexistent" >/dev/null 2>&1; then ok "rejects a folder without inventory"; else bad "rejects a folder without inventory"; fi
 
 echo "argument checks"
