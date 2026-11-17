@@ -72,7 +72,7 @@ now as $now
 | ($apps | map({key: .appId, value: (.secrets // [])}) | from_entries) as $secretsBy
 | [ $model[]
     | . as $m
-    | ([($secretsBy[$m.appId] // [])[] | {s: (.start | ts), e: (.end | ts), start, end}]) as $sec
+    | ([($secretsBy[$m.appId] // [])[] | {s: (.start | ts), e: (.end | ts), start, "end": .end}]) as $sec
     | . + {
         valid: [$sec[] | select(.e != null and .e >= $now)],
         noEnd: [$sec[] | select(.e == null)],
