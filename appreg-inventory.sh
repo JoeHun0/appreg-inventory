@@ -252,8 +252,19 @@ fi
 log "Building reports..."
 read -r -d '' JQ_MODEL <<'JQ'
 def lc: ascii_downcase;
-def ts: if . == null then null
-        else (sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | try fromdateiso8601 catch null) end;
+def ts: # ISO 8601 date -> Unix seconds (UTC), in plain arithmetic: some Windows builds of
+         # jq have no strptime, so the built-in ISO date parser fails there
+  if . == null or . == "" then null
+  else (capture("^(?<y>[0-9]{4})-(?<mo>[0-9]{2})-(?<d>[0-9]{2})([T ](?<h>[0-9]{2}):(?<mi>[0-9]{2})(:(?<s>[0-9]{2}))?)?") // null) as $c
+  | if $c == null then null
+    else ($c.mo | tonumber) as $m
+    | (($c.y | tonumber) - (if $m <= 2 then 1 else 0 end)) as $y
+    | (($y / 400) | floor) as $era | ($y - $era * 400) as $yoe
+    | (((153 * (if $m > 2 then $m - 3 else $m + 9 end) + 2) / 5 | floor) + ($c.d | tonumber) - 1) as $doy
+    | ($era * 146097 + $yoe * 365 + ($yoe / 4 | floor) - ($yoe / 100 | floor) + $doy - 719468) * 86400
+      + (($c.h // "0") | tonumber) * 3600 + (($c.mi // "0") | tonumber) * 60 + (($c.s // "0") | tonumber)
+    end
+  end;
 def level: if . == "/" then "root"
            elif test("^/subscriptions/[^/]+$"; "i") then "subscription"
            elif test("^/subscriptions/[^/]+/resourcegroups/[^/]+$"; "i") then "resourceGroup"
@@ -266,7 +277,8 @@ def crit_entra: ["Global Administrator", "Privileged Role Administrator", "Privi
                  "Application Administrator", "Cloud Application Administrator", "Hybrid Identity Administrator",
                  "Partner Tier2 Support", "Domain Name Administrator", "External Identity Provider Administrator",
                  "Conditional Access Administrator", "Security Administrator", "Authentication Policy Administrator",
-                 "Intune Administrator"];
+                 "Intune Administrator", "User Administrator", "Groups Administrator", "Authentication Administrator",
+                 "Exchange Administrator", "SharePoint Administrator"];
 def crit_api: ["RoleManagement.ReadWrite.Directory", "AppRoleAssignment.ReadWrite.All", "Application.ReadWrite.All",
                "Directory.ReadWrite.All", "UserAuthenticationMethod.ReadWrite.All", "Policy.ReadWrite.ConditionalAccess",
                "Policy.ReadWrite.AuthenticationMethod", "Domain.ReadWrite.All", "PrivilegedAccess.ReadWrite.AzureADGroup",
@@ -277,7 +289,9 @@ def crit_api: ["RoleManagement.ReadWrite.Directory", "AppRoleAssignment.ReadWrit
 def rate_azure: if (.role | IN(priv_azure[])) and (.level == "root" or .level == "managementGroup") then 4
                 elif (.role | IN(priv_azure[])) and .level == "subscription" then 3
                 else 2 end;
-def rate_entra: if (.role | IN(crit_entra[])) then 4 else 3 end;
+def rate_entra: if (.role | IN(crit_entra[])) then 4
+                elif (.role | test("reader"; "i")) then 2
+                else 3 end;
 def rate_api: if .perm == "(default access)" then 1
               elif (.perm | IN(crit_api[])) then 4
               elif (.perm | test("ReadWrite|FullControl|full_access|^Mail\\.(Read|Send)")) then 3

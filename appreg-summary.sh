@@ -59,8 +59,19 @@ DETECTED=$(date -r "$DIR/raw/model.jsonl" +%Y-%m-%d 2>/dev/null || date +%Y-%m-%
 
 # ---------------------------------------------------------------- shared jq: the per-app model
 read -r -d '' JQ_PRE <<'JQ'
-def ts: if . == null then null
-        else (sub("\\.[0-9]+"; "") | sub("\\+00:00$"; "Z") | try fromdateiso8601 catch null) end;
+def ts: # ISO 8601 date -> Unix seconds (UTC), in plain arithmetic: some Windows builds of
+         # jq have no strptime, so the built-in ISO date parser fails there
+  if . == null or . == "" then null
+  else (capture("^(?<y>[0-9]{4})-(?<mo>[0-9]{2})-(?<d>[0-9]{2})([T ](?<h>[0-9]{2}):(?<mi>[0-9]{2})(:(?<s>[0-9]{2}))?)?") // null) as $c
+  | if $c == null then null
+    else ($c.mo | tonumber) as $m
+    | (($c.y | tonumber) - (if $m <= 2 then 1 else 0 end)) as $y
+    | (($y / 400) | floor) as $era | ($y - $era * 400) as $yoe
+    | (((153 * (if $m > 2 then $m - 3 else $m + 9 end) + 2) / 5 | floor) + ($c.d | tonumber) - 1) as $doy
+    | ($era * 146097 + $yoe * 365 + ($yoe / 4 | floor) - ($yoe / 100 | floor) + $doy - 719468) * 86400
+      + (($c.h // "0") | tonumber) * 3600 + (($c.mi // "0") | tonumber) * 60 + (($c.s // "0") | tonumber)
+    end
+  end;
 def risklabel: ["", "LOW", "MEDIUM", "HIGH", "CRITICAL"][.];
 def pct($n; $of): if $of == 0 then "0%" else "\(($n * 100 / $of) | round)%" end;
 def top($n): group_by(.) | map({k: .[0], c: length}) | sort_by(-.c, .k) | .[:$n];

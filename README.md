@@ -129,9 +129,9 @@ gets the highest one.
 
 | Rating | Azure RBAC | Entra ID roles | API permissions |
 |---|---|---|---|
-| **CRITICAL** | Owner, User Access Administrator, Role Based Access Control Administrator or Contributor at **root or management group** level | Roles that lead to tenant takeover or auth bypass: Global Admin, Privileged Role Admin, Privileged Authentication Admin, Application Admin, Cloud Application Admin, Hybrid Identity Admin, Conditional Access Admin, Security Admin, Intune Admin, … | `RoleManagement.ReadWrite.Directory`, `AppRoleAssignment.ReadWrite.All`, `Application.ReadWrite.All`, `Directory.ReadWrite.All`, `UserAuthenticationMethod.ReadWrite.All`, `Policy.ReadWrite.ConditionalAccess`, `Domain.ReadWrite.All`, `full_access_as_app`, … |
-| **HIGH** | The same roles at **subscription** level | Any other directory role | Other write or full-control permissions (`*ReadWrite*`, `*FullControl*`), `Mail.Read`/`Mail.Send` |
-| **MEDIUM** | Any role on a resource group or resource, or a non-privileged role higher up | – | Read permissions (e.g. `User.Read.All`) |
+| **CRITICAL** | Owner, User Access Administrator, Role Based Access Control Administrator or Contributor at **root or management group** level | Roles that lead to tenant takeover or auth bypass: Global Admin, Privileged Role Admin, Privileged Authentication Admin, Application Admin, Cloud Application Admin, Hybrid Identity Admin, Conditional Access Admin, Security Admin, Intune Admin, User Admin, Groups Admin, Authentication Admin, Exchange Admin, SharePoint Admin, … | `RoleManagement.ReadWrite.Directory`, `AppRoleAssignment.ReadWrite.All`, `Application.ReadWrite.All`, `Directory.ReadWrite.All`, `UserAuthenticationMethod.ReadWrite.All`, `Policy.ReadWrite.ConditionalAccess`, `Domain.ReadWrite.All`, `full_access_as_app`, … |
+| **HIGH** | The same roles at **subscription** level | Any other directory role, except reader roles | Other write or full-control permissions (`*ReadWrite*`, `*FullControl*`), `Mail.Read`/`Mail.Send` |
+| **MEDIUM** | Any role on a resource group or resource, or a non-privileged role higher up | Reader roles (Directory Readers, Global Reader, …) | Read permissions (e.g. `User.Read.All`) |
 | **LOW** | No roles | – | Default access only |
 
 The full lists are at the top of the `JQ_MODEL` block in the script. Adjust them to your own threat model.
