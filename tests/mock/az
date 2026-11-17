@@ -14,10 +14,12 @@
 #   SP  "saml-app"          own password credential (SAML SSO)
 #
 # It also simulates paging (Resource Graph skip token, Graph nextLink) and
-# refusals (tenant-wide directory role list, PIM eligibility schedules).
+# a refusal of the tenant-wide directory role list. Every call is logged to
+# $MOCK_CALLS if set.
 # SPDX-License-Identifier: MIT
 
 args="$*"
+[[ -n "${MOCK_CALLS:-}" ]] && printf '%s\n' "$args" >> "$MOCK_CALLS"
 url=""; prev=""
 for x in "$@"; do [[ "$prev" == "--url" ]] && url="$x"; prev="$x"; done
 
@@ -80,7 +82,6 @@ J
         echo "{\"value\":[{\"id\":\"ra1\",\"principalId\":\"$GRP\",\"roleDefinitionId\":\"rd-appadmin\",\"directoryScopeId\":\"/\"}]}" ;;
       */roleAssignments\?*) echo '{"value":[]}' ;;
       */roleAssignments) echo "Forbidden (simulated)" >&2; exit 1 ;;
-      */roleEligibilitySchedules*) echo "Forbidden (simulated)" >&2; exit 1 ;;
       *) echo "mock az: unhandled url $url" >&2; exit 1 ;;
     esac ;;
 

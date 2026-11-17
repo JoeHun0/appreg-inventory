@@ -8,8 +8,8 @@
 #   * owners (they can add new secrets to the app)
 #   * Azure RBAC role assignments on every scope (tenant root, management groups,
 #     subscriptions, resource groups, resources) - direct and through groups
-#   * Entra ID directory roles (active, and PIM-eligible if readable) - direct
-#     and through groups
+#   * Entra ID directory roles (active assignments; PIM-eligible ones can't be
+#     read with az, see the README) - direct and through groups
 #   * API application permissions (Microsoft Graph, Exchange, ...)
 # and gives each app a rough risk rating (a heuristic - verify by hand).
 #
@@ -244,21 +244,9 @@ if ! graph_all "$GRAPH/roleManagement/directory/roleAssignments" \
   done < "$RAW/principals.txt"
 fi
 
-# PIM-eligible assignments (needs PIM licensing and read consent; skipped if refused)
-if ! graph_all "$GRAPH/roleManagement/directory/roleEligibilitySchedules" \
-     | jq -c '{kind: "eligible", id, principalId, roleDefinitionId, directoryScopeId}' >> "$RAW/dirroles.jsonl"; then
-  first=1
-  while read -r p; do
-    if ! graph_all "$GRAPH/roleManagement/directory/roleEligibilitySchedules?\$filter=principalId%20eq%20'$p'" \
-         | jq -c '{kind: "eligible", id, principalId, roleDefinitionId, directoryScopeId}' >> "$RAW/dirroles.jsonl"; then
-      if ((first)); then
-        warn "PIM-eligible role assignments not readable - only active roles are reported"
-        break
-      fi
-    fi
-    first=0
-  done < "$RAW/principals.txt"
-fi
+# PIM-eligible Entra roles are not read: the Azure CLI's Graph token never carries the
+# RoleEligibilitySchedule / RoleManagement read scopes, whatever the user's own roles are.
+# Check them in the portal (Entra ID > Roles and administrators > Eligible assignments).
 
 # ---------------------------------------------------------------- 7. build the model
 log "Building reports..."

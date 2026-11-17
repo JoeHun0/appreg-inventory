@@ -30,7 +30,7 @@ For each selected app registration:
 | **Credentials** | number of client secrets and certificates, how many are expired, next expiry, longest secret lifetime |
 | **Owners** | users and service principals that own the app (they can add new secrets to it) |
 | **Azure RBAC** | role assignments on the tenant root (`/`), management groups, subscriptions, resource groups and resources |
-| **Entra ID roles** | active directory role assignments, plus PIM-eligible ones if your account can read them |
+| **Entra ID roles** | active directory role assignments (PIM-eligible ones are not covered, see [Limitations](#limitations)) |
 | **API permissions** | application permissions granted to the app (Microsoft Graph, Exchange, …) by name |
 | **Groups** | Azure roles and Entra roles the app gets through (nested) group membership |
 
@@ -60,7 +60,7 @@ These don't show on the app registration, so they're easy to miss (see [Output](
   - Azure: **Reader** on the tenant root management group (or on every management group and
     subscription you want covered).
   - Entra ID: **Global Reader**, or Directory Readers (Global Reader is needed for directory role
-    assignments and PIM eligibility).
+    assignments).
   - Root-scope (`/`) assignments are visible only with
     [elevated access](https://learn.microsoft.com/azure/role-based-access-control/elevate-access-global-admin).
     Without it they're skipped with a warning.
@@ -89,7 +89,7 @@ They open directly in LibreOffice Calc or Excel.
 |---|---|
 | `summary.tsv` | One row per app, highest risk first: secrets, expired secrets, next expiry, longest secret lifetime (days), certificates, SP's own secrets, SP enabled, owners, privileged Azure roles per scope level (e.g. `Owner@managementGroup x1; Contributor@subscription x40`), number of Azure assignments, Entra roles, risky API permissions |
 | `azure_rbac.tsv` | Every Azure role assignment: rating, app, `via` (`direct` or `group: <name>`), role, scope level, scope |
-| `entra_roles.tsv` | Every Entra ID directory role: rating, app, `via`, role, `active`/`eligible`, directory scope |
+| `entra_roles.tsv` | Every Entra ID directory role: rating, app, `via`, role, `active`, directory scope |
 | `api_permissions.tsv` | Every API application permission: rating, app, API, permission |
 | `sp_own_secrets.tsv` | Service principals with their own password credentials (not written with `-a`). This is **normal for SAML SSO apps** (`singleSignOnMode = saml`) and **worth investigating for anything else**: credentials added directly to a service principal are a known persistence technique. |
 | `raw/` | The JSON lines the reports are built from, for your own queries with `jq` |
@@ -118,8 +118,7 @@ The full lists are at the top of the `JQ_MODEL` block in the script. Adjust them
    (`authorizationresources`). Management-group and root-scope assignments are also read with
    `az role assignment list`, and duplicates are removed.
 5. Role names from Resource Graph and `az role definition list`.
-6. Entra ID directory role assignments (tenant-wide, or per principal if that is refused) and PIM
-   eligibility schedules (skipped with a warning if not readable).
+6. Entra ID directory role assignments (tenant-wide, or per principal if that is refused).
 7. Everything is joined in `jq`: the app's service principal plus its groups give its principals, then
    each principal's roles and permissions are looked up.
 
@@ -129,6 +128,11 @@ The full lists are at the top of the `JQ_MODEL` block in the script. Adjust them
 - **Not covered:** classic subscription administrators, Azure DevOps or GitHub-side configuration
   (which pipelines use which app), and data-plane permissions (Key Vault access policies, storage SAS,
   SQL users, Exchange RBAC for applications).
+- **PIM-eligible Entra roles** aren't read. The Azure CLI's Microsoft Graph token never includes the
+  `RoleEligibilitySchedule` / `RoleManagement` read permissions, so this fails for every user, Global
+  Admins included. Service principals can't hold eligible roles themselves; the gap is eligible roles of
+  the groups they're in. Check those in the portal: **Entra ID → Roles and administrators → (role) →
+  Eligible assignments**.
 - **Delegated permissions** (OAuth2 grants acting on behalf of users) aren't listed. Only application
   permissions are.
 - **Timing:** Resource Graph can lag a few minutes behind very recent role changes.

@@ -9,6 +9,7 @@ SCRIPT="$HERE/../appreg-inventory.sh"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 export PATH="$HERE/mock:$PATH"
+export MOCK_CALLS="$WORK/calls"
 
 pass=0 fail=0
 ok()  { pass=$((pass + 1)); printf '  ok   %s\n' "$1"; }
@@ -44,7 +45,7 @@ has "$OUT/api_permissions.tsv" "Graph permission resolved to its name and rated"
   CRITICAL terraform-deploy appA "Microsoft Graph" Application.ReadWrite.All
 has "$OUT/api_permissions.tsv" "default access shown as such" LOW billing-reader appC "Microsoft Graph" "(default access)"
 has "$OUT/sp_own_secrets.tsv" "SP with its own password credential listed" saml-app appS Application saml 1 2
-if grep -q "PIM-eligible role assignments not readable" "$WORK/log"; then ok "PIM refusal reported"; else bad "PIM refusal reported"; fi
+if [[ -s "$WORK/calls" ]] && ! grep -q "roleEligibilitySchedules" "$WORK/calls"; then ok "PIM eligibility is not queried"; else bad "PIM eligibility is not queried"; fi
 if grep -rqi '"hint"' "$OUT"; then bad "no secret hints in the output"; else ok "no secret hints in the output"; fi
 perm=$(stat -c %a "$OUT/summary.tsv" 2>/dev/null || stat -f %Lp "$OUT/summary.tsv")
 if [[ "$perm" == 600 ]]; then ok "reports readable by owner only"; else bad "reports readable by owner only (mode $perm)"; fi
